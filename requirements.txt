@@ -1,0 +1,3 @@
+git+https://github.com/Ruairi-osul/mfreeze.git
+pandas
+numpy
