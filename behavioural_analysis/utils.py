@@ -7,9 +7,6 @@ import numpy as np
 
 class BehaviourLoader:
 
-    default_data_dirname = "data"
-    default_metadata_dirname = "metadata"
-    default_mouse_metadata_filename = "mice.xlsx"
     default_session_names = [
         "D1Morning",
         "D1Afternoon",
@@ -25,14 +22,15 @@ class BehaviourLoader:
     def __init__(
         self,
         home_dir: str,
-        metadata_dirname=None,
-        mouse_metadata_filename=None,
+        metadata_dirname="metadata",
+        mouse_metadata_filename="mice.xlsx",
         session_names=None,
         mice=None,
-        data_dirname=None,
-        raw_data_dirname=None,
-        freeze_filename=None,
-        behaviour_data_dirname=None,
+        data_dirname="data",
+        raw_data_dirname="raw_bonsai_data",
+        freeze_filename="freeze_ts.csv",
+        behaviour_data_dirname="behaviour_analysis",
+        combined_data_dirname="combined_data",
     ):
         self.home_dir = Path(home_dir)
         self.session_names = (
@@ -40,11 +38,7 @@ class BehaviourLoader:
             if session_names is None
             else session_names
         )
-        self.data_dirname = (
-            BehaviourLoader.default_data_dirname
-            if data_dirname is None
-            else data_dirname
-        )
+        self.data_dirname = data_dirname
         if not mice:
             self.mice = list(
                 map(
@@ -54,36 +48,18 @@ class BehaviourLoader:
             )
         else:
             self.mice = mice
-        self.behaviour_data_dirname = (
-            BehaviourLoader.default_behaviour_data_dirname
-            if behaviour_data_dirname is None
-            else behaviour_data_dirname
-        )
-        self.freeze_filename = (
-            BehaviourLoader.default_freeze_filename
-            if freeze_filename is None
-            else freeze_filename
-        )
+        self.behaviour_data_dirname = behaviour_data_dirname
+        self.freeze_filename = freeze_filename
         self._check_processed_data()
 
-        self.raw_data_dirname = (
-            BehaviourLoader.default_raw_data_dirname
-            if raw_data_dirname is None
-            else raw_data_dirname
-        )
+        self.raw_data_dirname = raw_data_dirname
         self._check_raw_data()
 
-        self.metadata_dirname = (
-            BehaviourLoader.default_metadata_dirname
-            if metadata_dirname is None
-            else metadata_dirname
-        )
-        self.mouse_metadata_filename = (
-            BehaviourLoader.default_mouse_metadata_filename
-            if mouse_metadata_filename is None
-            else mouse_metadata_filename
-        )
+        self.metadata_dirname = metadata_dirname
+        self.mouse_metadata_filename = mouse_metadata_filename
         self._check_metadata()
+
+        self.combined_data_dirname = combined_data_dirname
 
     def _check_metadata(self):
         metadata_dir = self.home_dir / self.metadata_dirname
@@ -163,9 +139,9 @@ class BehaviourLoader:
                 df_list.append(df)
         return pd.concat(df_list)
 
-    def load_data(self, mice: list = None, sessions: list = None):
+    def load_freeze_data(self, mice: list = None, sessions: list = None):
         """
-        Returns pandas dataframe with data from each session
+        Returns pandas dataframe with freeze data from each session
         """
         if mice is not None:
             if not set(mice).issubset(set(self.mice)):
@@ -200,6 +176,27 @@ class BehaviourLoader:
         df = df.rename(columns={"GROUP": "group", "Mouse ID": "mouseID"})
         return df
 
+    @staticmethod
+    def _load_assert_single(files, pattern, name):
+        files = filter(lambda x: re.search(re.escape(pattern), x.name), files)
+        df = pd.read_csv(next(files))
+        try:
+            next(files)
+        except StopIteration:
+            pass
+        else:
+            raise ValueError(f"More than one {name} dataset found")
+        return df
+
+    def load_combined_data(self):
+        data_paths = list((self.home_dir / self.combined_data_dirname).glob("*.csv"))
+        df_freeze = self._load_assert_single(data_paths, "freeze", "freeze")
+        df_events = self._load_assert_single(data_paths, "events", "events")
+        df_mouse_meta = self._load_assert_single(
+            data_paths, "mouse_metadata", "mouse_metadata"
+        )
+        return df_freeze, df_events, df_mouse_meta
+
 
 def resampler(df, digits=0):
     return df.pipe(
@@ -207,3 +204,10 @@ def resampler(df, digits=0):
         .was_freezing.mean()
         .reset_index()
     )
+
+
+if __name__ == "__main__":
+    p = r"D:\Context_switch_output\pilot"
+    loader = BehaviourLoader(p)
+    f, e, m = loader.load_combined_data()
+    print(m)
