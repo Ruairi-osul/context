@@ -1,6 +1,8 @@
 from pathlib import Path
 import pandas as pd
 import warnings
+import re
+import numpy as np
 
 
 class BehaviourLoader:
@@ -18,6 +20,7 @@ class BehaviourLoader:
     ]
     default_behaviour_data_dirname = "behaviour_analysis"
     default_freeze_filename = "freeze_ts.csv"
+    default_raw_data_dirname = "raw_bonsai_data"
 
     def __init__(
         self,
@@ -25,7 +28,9 @@ class BehaviourLoader:
         metadata_dirname=None,
         mouse_metadata_filename=None,
         session_names=None,
+        mice=None,
         data_dirname=None,
+        raw_data_dirname=None,
         freeze_filename=None,
         behaviour_data_dirname=None,
     ):
@@ -40,9 +45,15 @@ class BehaviourLoader:
             if data_dirname is None
             else data_dirname
         )
-        self.mice = list(
-            map(lambda x: x.name, (self.home_dir.joinpath(self.data_dirname).glob("*")))
-        )
+        if not mice:
+            self.mice = list(
+                map(
+                    lambda x: x.name,
+                    (self.home_dir.joinpath(self.data_dirname).glob("*")),
+                )
+            )
+        else:
+            self.mice = mice
         self.behaviour_data_dirname = (
             BehaviourLoader.default_behaviour_data_dirname
             if behaviour_data_dirname is None
@@ -53,7 +64,14 @@ class BehaviourLoader:
             if freeze_filename is None
             else freeze_filename
         )
-        self._check_data()
+        self._check_processed_data()
+
+        self.raw_data_dirname = (
+            BehaviourLoader.default_raw_data_dirname
+            if raw_data_dirname is None
+            else raw_data_dirname
+        )
+        self._check_raw_data()
 
         self.metadata_dirname = (
             BehaviourLoader.default_metadata_dirname
@@ -78,7 +96,11 @@ class BehaviourLoader:
                     f"Could not find mouse metadata file: {str(mouse_metadata_file)}"
                 )
 
-    def _check_data(self):
+    def _check_raw_data(self):
+        # TODO
+        pass
+
+    def _check_processed_data(self):
         "Check that data exists for all mice on each session"
         for mouse in self.mice:
             for session in self.session_names:
@@ -94,6 +116,52 @@ class BehaviourLoader:
                     warnings.warn(
                         f"Expected data file not found: {str(data_file)}.\nData could be not yet analysed"
                     )
+
+    def load_events(self, mice: list = None, sessions: list = None):
+        if mice is not None:
+            if not set(mice).issubset(set(self.mice)):
+                raise ValueError(f"Unknown mice passed. Known mice: {self.mice}")
+        else:
+            mice = self.mice
+        if sessions is not None:
+            if not set(sessions).issubset(set(self.session_names)):
+                raise ValueError(f"Unknown mice passed. Known mice: {self.mice}")
+        else:
+            sessions = self.session_names
+        df_list = []
+        for mouse in mice:
+            for session in sessions:
+                csv_files = (
+                    self.home_dir
+                    / self.data_dirname
+                    / mouse
+                    / session
+                    / self.raw_data_dirname
+                ).glob("*.csv")
+                file_name = next(
+                    filter(lambda x: re.search("events", str(x.name)), csv_files)
+                )
+                df = (
+                    pd.read_csv(file_name, names=["event_name", "timepoint"])
+                    .assign(
+                        mouseID=mouse,
+                        session_name=session,
+                        timepoint=lambda x: pd.to_datetime(x.timepoint),
+                        experimental_time_not_aligned=lambda x: (
+                            x.timepoint - x.timepoint.min()
+                        ).dt.total_seconds(),
+                        experimental_time=lambda x: np.round(
+                            x.experimental_time_not_aligned
+                            - x.loc[
+                                lambda x: x.event_name == "experiment_start"
+                            ].experimental_time_not_aligned.values[0],
+                            2,
+                        ),
+                    )
+                    .drop("experimental_time_not_aligned", axis=1)
+                )
+                df_list.append(df)
+        return pd.concat(df_list)
 
     def load_data(self, mice: list = None, sessions: list = None):
         """
@@ -131,3 +199,11 @@ class BehaviourLoader:
             df = df[["Mouse ID", "GROUP"]]
         df = df.rename(columns={"GROUP": "group", "Mouse ID": "mouseID"})
         return df
+
+
+def resampler(df, digits=0):
+    return df.pipe(
+        lambda x: x.groupby(["mouseID", "session_name", np.round(x.time, digits)])
+        .was_freezing.mean()
+        .reset_index()
+    )
