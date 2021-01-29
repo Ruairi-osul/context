@@ -1,17 +1,85 @@
 from utils import BehaviourLoader, resampler
-import pandas as pd
+import numpy as np
 import random
 import matplotlib.pyplot as plt
 import seaborn as sns
+from scipy.ndimage import gaussian_filter1d
 
 
-def switch_plot_single(day):
+def switch_plot_single(df, mouseID, session="D3", sigma=None, figsize=(5, 2), ax=None):
     "plot shaded time series"
-    pass
+    if ax is None:
+        _, ax = plt.subplots(figsize=figsize)
+
+    if session == "D3":
+        remainder = (2, 3)
+    elif session == "D4":
+        remainder = (0, 1)
+    else:
+        raise ValueError(f"Unknown session {session}")
+    df = df.loc[lambda x: x.mouseID == mouseID].loc[lambda x: x.session_name == session]
+    sigma = 3 * np.std(df.was_freezing)
+    df = df.assign(
+        time=lambda x: x.time.divide(60),
+        smooth=lambda x: gaussian_filter1d(x.was_freezing, sigma),
+    )
+    ax = sns.lineplot(data=df, x="time", y="smooth", color="black")
+    ax.fill_between(
+        df.time,
+        df.smooth.min(),
+        df.smooth.max(),
+        where=np.isin(np.floor(df.time) % 4, remainder),
+        color="red",
+        alpha=0.2,
+        label="Shock Context",
+    )
+    ax.set_ylabel("Freeze Status")
+    ax.set_xlabel("Time [min]")
+    sns.despine()
+    ax.legend()
+    plt.tight_layout()
+    return ax
 
 
-def switch_plot_multiple(day):
-    pass
+def switch_plot_multiple(
+    df, session="D4", group_col="group", sigma=None, figsize=(5, 3), ax=None
+):
+    if ax is None:
+        _, ax = plt.subplots(figsize=figsize)
+
+    if session == "D3":
+        remainder = (2, 3)
+    elif session == "D4":
+        remainder = (0, 1)
+    else:
+        raise ValueError(f"Unknown session {session}")
+    df = df.loc[lambda x: x.session_name == session]
+    sigma = 3 * np.std(df.was_freezing)
+    df = df.assign(
+        time=lambda x: x.time.divide(60),
+        smooth=lambda x: x.groupby(["mouseID", "session_name"]).was_freezing.transform(
+            lambda y: gaussian_filter1d(y, sigma)
+        ),
+    )
+    ax = sns.lineplot(
+        data=df, x="time", y="smooth", hue=group_col, ci=None, linewidth=2
+    )
+    first_mouse = df.loc[lambda x: x.mouseID == x.mouseID.unique()[0]]
+    ax.fill_between(
+        first_mouse.time,
+        0,
+        1,
+        where=np.isin(np.floor(first_mouse.time) % 4, remainder),
+        color="red",
+        alpha=0.2,
+        label="Shock Context",
+    )
+    ax.set_ylabel("Freeze probability")
+    ax.set_xlabel("Time [min]")
+    sns.despine()
+    ax.legend(bbox_to_anchor=(0.4, 1.25))
+    plt.tight_layout()
+    return ax
 
 
 def get_random_mouse(df):
@@ -21,33 +89,15 @@ def get_random_mouse(df):
 if __name__ == "__main__":
     p = r"D:\Context_switch_output\pilot"
     loader = BehaviourLoader(p)
-    df = pd.merge(loader.load_data(), loader.load_mouse_metadata(minimum=True)).assign(
-        time_min=lambda x: x.time.divide(60)
+    freeze, _, mouse = loader.load_combined_data()
+    print(
+        freeze.groupby("mouseID")
+        .was_freezing.mean()
+        .reset_index()
+        .merge(mouse[["mouseID", "group"]])
     )
-    # print(df.session_name.unique())
-
-    # test single mouse
-    # df1 = df.loc[lambda x: (x.group == "exp") & (x.session_name == "D3")].loc[
-    #     lambda x: x.mouseID == get_random_mouse(x)
-    # ]
-    # df1.plot(x="time_min", y="was_freezing")
-    # plt.show()
-
-    # test multiple mice
-    print(df.group.unique())
-    df1 = df.loc[lambda x: (x.group == "no shock") & (x.session_name == "D4")]
-    df1 = resampler(df1, -1).assign(time=lambda x: x.time.divide(60))
-    events = (
-        loader.load_events()
-        .loc[lambda x: (x.event_name == "context_one_on") & (x.session_name == "D4")]
-        .assign(experimental_time=lambda x: x.experimental_time.divide(60))
-    )
-
-    print(events)
-    # res = df1.groupby("time").was_freezing.mean().reset_index()
-    sns.lineplot(data=df1, x="time", y="was_freezing")
-    # res.plot(x="time", y="was_freezing")
+    df = resampler(freeze, -1).merge(mouse[["mouseID", "group"]])
+    print(df)
+    ax = switch_plot_multiple(df, session="D4", sigma=None)
+    ax.set_title("Test Day 2")
     plt.show()
-
-    # df1.plot(x=time, y="was")
-    # print(df1)
