@@ -189,6 +189,7 @@ class BehaviourLoader:
         return df
 
     def load_combined_data(self):
+        "returns: freeze, events, mouse_meta"
         data_paths = list((self.home_dir / self.combined_data_dirname).glob("*.csv"))
         df_freeze = self._load_assert_single(data_paths, "freeze", "freeze")
         df_events = self._load_assert_single(data_paths, "events", "events")
@@ -206,8 +207,47 @@ def resampler(df, digits=0):
     )
 
 
+def add_context_col(
+    df,
+    time_col="time",
+    session_col="session_name",
+    cohort_col="Cohort",
+    units="seconds",
+):
+    SESSION_DICT = {
+        "D1Morning": "context1",
+        "D1Afternoon": "context2",
+        "D2Morning": "context1",
+        "D2Afternoon": "context2",
+        "D3": "mix",
+        "D4": "mix",
+    }
+    if units == "seconds":
+        df = df.assign(tmp=lambda x: np.floor(x[time_col].divide(60)).mod(4))
+    elif units == "minutes":
+        df = df.assign(tmp=lambda x: np.floor(x[time_col]).mod(4))
+    else:
+        raise ValueError("Unknown units")
+    df = df.assign(context=lambda x: x[session_col].map(SESSION_DICT))
+    df.loc[df[session_col] == "D3", "context"] = np.where(
+        df.loc[df[session_col] == "D3", "tmp"].isin([0, 1]).values,
+        "context1",
+        "context2",
+    )
+    df.loc[df[session_col] == "D4", "context"] = np.where(
+        df.loc[df[session_col] == "D4", "tmp"].isin([0, 1]).values,
+        "context2",
+        "context1",
+    )
+    df.loc[(df[cohort_col] == 1) & (df[session_col] == "D4"), "context"] = df.loc[
+        (df[cohort_col] == 1) & (df[session_col] == "D4"), "context"
+    ].map({"context1": "context2", "context2": "context1"})
+    return df.drop("tmp", axis=1)
+
+
 if __name__ == "__main__":
     p = r"D:\Context_switch_output\pilot"
     loader = BehaviourLoader(p)
     f, e, m = loader.load_combined_data()
-    print(m)
+    f = add_context_col(f.merge(m[["mouseID", "Cohort", "group"]]))
+    print(f[["mouseID", "group", "session_name", "context"]].drop_duplicates())
